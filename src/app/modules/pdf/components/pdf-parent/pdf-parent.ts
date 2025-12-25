@@ -1,6 +1,8 @@
 import { Component } from '@angular/core';
 import { PDFContext, PDFDocument, PDFPageLeaf } from 'pdf-lib';
 import { PdfService } from '../../services/pdf-service';
+import { saveAs } from 'file-saver';
+
 
 @Component({
   selector: 'pdf-parent',
@@ -27,11 +29,14 @@ export class PdfParent {
       const bytes = new Uint8Array(buffer);
 
       const processed = await this.pdfService.reprocessPDF(bytes);
+      let pdfBytes = await processed.save();
+      const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
 
-      console.log('PDF reprocessed successfully', processed);
-    } catch (err) {
-      console.error('Error processing uploaded PDF:', err);
+      saveAs(blob, 'processed.pdf');
+    } catch (error) {
+      console.error('Error processing PDF:', error);
     }
+
   }
 
 

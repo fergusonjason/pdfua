@@ -112,20 +112,20 @@ private parseStream(rawStream: Uint8Array): Uint8Array {
   return new TextEncoder().encode(newStreamString);
 }
 
-  private async extractContentStreams(
-    document: PDFDocument,
-    page: PDFPage
-  ): Promise<PDFStream[]> {
-    const results: PDFStream[] = [];
-    const refs = this.getContentStreamRefs(page);
+  // private async extractContentStreams(
+  //   document: PDFDocument,
+  //   page: PDFPage
+  // ): Promise<PDFStream[]> {
+  //   const results: PDFStream[] = [];
+  //   const refs = this.getContentStreamRefs(page);
 
-    for (const ref of refs) {
-      const stream = document.context.lookup(ref) as PDFStream;
-      results.push(stream);
-    }
+  //   for (const ref of refs) {
+  //     const stream = document.context.lookup(ref) as PDFStream;
+  //     results.push(stream);
+  //   }
 
-    return results;
-  }
+  //   return results;
+  // }
 
   private getContentStreamRefs(page: PDFPage): PDFRef[] {
 
