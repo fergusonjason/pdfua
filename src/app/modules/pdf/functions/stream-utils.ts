@@ -1,5 +1,25 @@
-import { PDFArray, PDFName, PDFStream } from "pdf-lib";
+import { PDFArray, PDFName, PDFOperator, PDFStream } from "pdf-lib";
 import { PDFToken } from "../model/pdf-token";
+
+export async function decodeStream(stream: PDFStream): Promise<Uint8Array> {
+
+  // If the stream is not encoded, return raw contents
+  if (!isEncodedStream(stream)) {
+    const raw = stream.getContents();
+    return raw;
+  }
+
+  // Encoded stream: handle FlateDecode (for now)
+  if (hasFilter(stream, 'FlateDecode')) {
+    const inflated = await inflate(stream.getContents());
+    return inflated;
+  }
+
+  // Encoded but not FlateDecode — return raw bytes
+  const raw = stream.getContents();
+  return raw;
+}
+
 
 export async function inflate(data: Uint8Array): Promise<Uint8Array> {
   // Ensure the buffer is a real ArrayBuffer
@@ -89,6 +109,7 @@ export function isCompressedStream(stream: PDFStream): boolean {
 export function streamToString(bytes: Uint8Array): string {
   return new TextDecoder('latin1').decode(bytes);
 }
+
 
 
 
