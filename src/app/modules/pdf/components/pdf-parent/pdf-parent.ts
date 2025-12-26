@@ -28,7 +28,7 @@ export class PdfParent {
       const buffer = await file.arrayBuffer();
       const bytes = new Uint8Array(buffer);
 
-      const processed = await this.pdfService.reprocessPDF(bytes);
+      const processed = await this.pdfService.reprocessPDF2(bytes);
       let pdfBytes = await processed.save();
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
 
