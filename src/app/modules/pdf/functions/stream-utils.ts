@@ -1,4 +1,4 @@
-import { PDFArray, PDFDict, PDFName, PDFOperator, PDFPage, PDFStream } from "pdf-lib";
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFOperator, PDFPage, PDFRef, PDFStream } from "pdf-lib";
 import { PDFToken } from "../model/pdf-token";
 
 export async function decodeStream(stream: PDFStream): Promise<Uint8Array> {
@@ -109,22 +109,4 @@ export function isCompressedStream(stream: PDFStream): boolean {
 export function streamToString(bytes: Uint8Array): string {
   return new TextDecoder('latin1').decode(bytes);
 }
-
-// export const getPageContentStreams = (page: PDFPage): PDFStream[] => {
-
-//   const pageDict = page.node.dict;
-//   const contents = pageDict.get(PDFName.of('Contents'));
-
-//   if (contents instanceof PDFStream) {
-//     return [contents];
-//   }
-
-//   if (contents instanceof PDFArray) {
-//     return contents.asArray().filter(c => c instanceof PDFStream) as PDFStream[];
-//   }
-
-//   return [];
-// }
-
-
 

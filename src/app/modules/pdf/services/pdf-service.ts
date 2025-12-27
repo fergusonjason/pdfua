@@ -1,26 +1,15 @@
 import { Injectable } from '@angular/core';
 import {
-  PDFArray,
-  PDFContext,
-  PDFDict,
   PDFDocument,
-  PDFName,
-  PDFNumber,
   PDFObject,
-  PDFPage,
-  PDFPageLeaf,
+  PDFRawStream,
   PDFRef,
-  PDFStream,
+  PDFStream
 } from 'pdf-lib';
+import { getPageContentRefs, rebuildPDFfromMap } from '../functions/pdf-object-utils';
 import {
-  decodeStream,
-  hasFilter,
-  inflate,
-  isCompressedStream,
-  isEncodedStream,
-  streamToString,
+  decodeStream
 } from '../functions/stream-utils';
-import { PDFToken } from '../model/pdf-token';
 import {
   parseOperators,
   tokenizeContentStream,
@@ -31,152 +20,75 @@ import { PDFOperator } from '../model/pdf-operator';
   providedIn: 'root',
 })
 export class PdfService {
-  private currentMCID: number;
 
-  private debug: boolean = true;
+  private currentMCID: number;
 
   constructor() {
     this.currentMCID = 0;
   }
 
-// async reprocessPDF2(input: Uint8Array): Promise<PDFDocument> {
-//   const pdfDoc = await PDFDocument.load(input);
 
-//   const pdfObjectMap = this.getObjectMap(pdfDoc);
+  async reprocessPDF(input: Uint8Array): Promise<Uint8Array> {
 
-//   for (const [ref, obj] of pdfObjectMap.entries()) {
-//     if (obj instanceof PDFStream) {
-//       // 1. Decode the original stream
-//       const decoded = await decodeStream(obj);
+    const pdfDoc: PDFDocument = await PDFDocument.load(input);
 
-//       // 2. Rewrite the stream (your custom logic)
-//       const rewritten = this.parseStream(decoded);
-
-//       // 3. Convert the PDFDict → LiteralObject
-//       const literalDict = this.dictToLiteral(obj.dict);
-
-//       // 4. Create a new flate stream
-//       const newStream = pdfDoc.context.flateStream(rewritten, literalDict);
-
-//       // 5. Replace the object in the REAL PDF context
-//       pdfDoc.context.indirectObjects.set(ref, newStream);
-//     }
-//   }
-
-//   return pdfDoc;
-// }
-
-
-  // async reprocessPDF2(input: Uint8Array): Promise<PDFDocument> {
-  //   const pdfDoc = await PDFDocument.load(input);
-
-  //   const pdfObjectMap = this.getObjectMap(pdfDoc);
-  //   const reprocessedPdfObjectMap = new Map<PDFRef, PDFObject>();
-  //   for (const [ref, obj] of pdfObjectMap.entries()) {
-  //   // pdfObjectMap.forEach(async (obj, ref) => {
-  //     if (obj instanceof PDFStream) {
-  //       const stream = obj as PDFStream;
-  //       const decodedStream = await decodeStream(stream);
-  //       const reprocessedStream = this.parseStream(decodedStream);
-  //       const newObj = pdfDoc.context.flateStream(
-  //         reprocessedStream,
-  //         this.dictToLiteral(obj.dict)
-  //       );
-
-  //       reprocessedPdfObjectMap.set(ref, newObj);
-  //     } else {
-  //       reprocessedPdfObjectMap.set(ref, obj);
-  //     }
-  //   }
-
-  //   const newDocument = await PDFDocument.create();
-  //   newDocument.context.assign(reprocessedPdfObjectMap);
-
-
-  //   return pdfDoc;
-  // }
-
-  async reprocessPDF2(input: Uint8Array): Promise<PDFDocument> {
-
-    const pdfDoc = await PDFDocument.load(input);
-    const pdfObjectMap = this.getObjectMap(pdfDoc);
+    // build map of the objects in the PDF
+    // const pdfObjectMap: Map<PDFRef, PDFObject> = this.getObjectMap(pdfDoc);
 
     // iterate the pages, get the PDFRef of the page content streams
-    const pageContentRefs = pdfDoc.getPages().flatMap((page) => {
-      const dict = page.node;
-      const contents = dict.lookup(PDFName.of('Contents'));
+    // First get /Type /Page objects, then follow the /Contents reference(s)
+    const pageContentRefs: Set<PDFRef> = getPageContentRefs(pdfDoc);
 
-      if (!contents) {
-        return [];
+    // iterate the actual page contents streams
+    for (const ref of pageContentRefs) {
+
+      // get the object from the PDFDocument context
+      const obj = pdfDoc.context.lookup(ref);
+      if (obj instanceof PDFStream) {
+        const stream = obj;
+        // const stream = obj as PDFStream;
+
+        // decode the stream from the object, may or may not be deflated
+        const decodedStream: Uint8Array = await decodeStream(stream);
+
+        // this is the stream that has been through the processors (MCID insert, etc)
+        const reprocessedStream: Uint8Array = this.parseStream(decodedStream);
+
+        // Access the internal contents via the PDFRawStream
+        if (obj instanceof PDFRawStream) {
+          // Directly modify the internal buffer
+          (obj as any).contents = reprocessedStream;
+
+          // Update Length in dictionary
+          obj.dict.set(
+            pdfDoc.context.obj('Length'),
+            pdfDoc.context.obj(reprocessedStream.length)
+          );
       }
+        // Create new PDFRawStream (uncompressed)
+        // const newRawStream = PDFRawStream.of(
+        //   obj.dict.clone(pdfDoc.context),
+        //   reprocessedStream
+        // );
 
-      if (contents instanceof PDFRef) {
-        return [contents];
+        // // Update the object in the context
+        // pdfDoc.context.assign(ref, newRawStream);
+
+        // compress the stream back into a PDFRawStream
+        // const newStream: PDFRawStream = pdfDoc.context.flateStream(reprocessedStream);
+
+        // replace the original with the reprocessed stream
+        // pdfObjectMap.set(ref, newStream);
+
       }
-
-      if (contents instanceof PDFArray) {
-        return contents.asArray().filter((item) => item instanceof PDFRef) as PDFRef[];
-      }
-
-      return [];
-    });
-
-    // Create a Set for O(1) lookups using ref.toString() or ref.tag
-    const pageContentRefSet = new Set(
-      pageContentRefs.map(ref => ref.toString()) // or ref.tag if available
-    );
-
-    // Process each stream in the PDF
-    for (const [ref, obj] of pdfObjectMap.entries()) {
-
-      if (pageContentRefSet.has(ref.toString()) && obj instanceof PDFStream) {
-
-        const stream = obj as PDFStream;
-
-        const decodedStream = await decodeStream(stream);
-        const reprocessedStream = this.parseStream(decodedStream);
-
-        // Create a clean dictionary WITHOUT /Filter and /Length
-        // flateStream will add these automatically
-        const cleanDict = this.dictToLiteralWithoutEncodingParams(stream.dict);
-
-        // Create new stream - this adds /Filter /FlateDecode and /Length automatically
-        const newStream = pdfDoc.context.flateStream(reprocessedStream, cleanDict);
-
-        // Replace the object in the PDF context
-        pdfDoc.context.assign(ref, newStream);
-      }
-
     }
 
-    return pdfDoc;
+    const newPdfBytes = await pdfDoc.save();
+    // const newPdfDoc = await rebuildPDFfromMap(pdfObjectMap, pdfDoc);
+    // const newPdfBytes = newPdfDoc.save();
+    return newPdfBytes;
   }
 
-private dictToLiteralWithoutEncodingParams(dict: PDFDict): Record<string, any> {
-
-  const literal = this.dictToLiteral(dict);
-
-  // Remove entries that flateStream will regenerate
-  delete literal["Filter"];
-  delete literal["Length"]
-  delete literal["DecodeParms"]; // Also remove decode parameters
-
-  return literal;
-}
-
-  /**
-   * Converts a PDFDict to a LiteralObject
-   *
-   * @param dict
-   * @returns
-   */
-  private dictToLiteral(dict: PDFDict): Record<string, any> {
-    const literal: Record<string, any> = {};
-    for (const key of dict.keys()) {
-      literal[key.asString()] = dict.get(key);
-    }
-    return literal;
-  }
 
   /**
    * Create a Map<PDFRef, PDFObject> for all indirect objects in the PDFDocument
@@ -195,109 +107,14 @@ private dictToLiteralWithoutEncodingParams(dict: PDFDict): Record<string, any> {
     return objMap;
   }
 
-  createStructElem(
-    ctx: PDFContext,
-    role: string,
-    kids: (PDFRef | number)[],
-    pageRef?: PDFRef,
-    parentRef?: PDFRef
-  ): PDFRef {
 
-    const dict = ctx.obj({
-      Type: PDFName.of("StructElem"),
-      S: PDFName.of(role),
-      K: kids.map(k => typeof k === "number" ? PDFNumber.of(k) : k),
-    });
-
-    if (pageRef) dict.set(PDFName.of("Pg"), pageRef);
-    if (parentRef) dict.set(PDFName.of("P"), parentRef);
-
-    const ref = ctx.register(dict);
-    return ref;
-  }
-
-  buildParentTree(
-    ctx: PDFContext,
-    mcidToStructElem: Map<number, PDFRef>
-  ): PDFRef {
-    const numsArray = [];
-
-    for (const [mcid, elemRef] of mcidToStructElem.entries()) {
-      numsArray.push(PDFNumber.of(mcid));
-      numsArray.push(elemRef);
-    }
-
-    const parentTreeDict = ctx.obj({
-      Kids: [ctx.obj({ Nums: numsArray })],
-    });
-
-    return ctx.register(parentTreeDict);
-  }
-
-  buildStructTreeRoot(
-    ctx: PDFContext,
-    topLevelElems: PDFRef[],
-    parentTreeRef: PDFRef
-  ): PDFRef {
-    const dict = ctx.obj({
-      Type: PDFName.of("StructTreeRoot"),
-      K: topLevelElems,
-      ParentTree: parentTreeRef,
-    });
-
-    return ctx.register(dict);
-  }
-
-
-  async reprocessPDF(input: Uint8Array): Promise<PDFDocument> {
-
-    const pdfDoc = await PDFDocument.load(input);
-    const pages = pdfDoc.getPages();
-
-    // Collect MCID mappings for the StructTree
-    const pageBlocks: { pageRef: PDFRef; mcids: number[] }[] = [];
-
-    for (const page of pages) {
-      const streams = this.getContentStreamRefs(page);
-
-      for (const streamRef of streams) {
-        const stream = pdfDoc.context.lookup(streamRef) as PDFStream;
-
-        const rawStream: Uint8Array | undefined = await decodeStream(stream);
-        if (!rawStream) {
-          continue;
-        }
-
-        const reprocessedStream: Uint8Array = this.parseStream(rawStream);
-
-        const pageMcids: number[] =
-          this.extractMCIDsFromStream(reprocessedStream);
-
-        pageBlocks.push({ pageRef: page.ref, mcids: pageMcids });
-
-        const newPdfStream = pdfDoc.context.flateStream(reprocessedStream);
-
-        const contents = page.node.get(PDFName.of('Contents'));
-
-        if (contents instanceof PDFRef) {
-          page.node.set(PDFName.of('Contents'), newPdfStream);
-        }
-
-        if (contents instanceof PDFArray) {
-          const arr = contents.asArray();
-          const index = arr.indexOf(streamRef);
-          if (index !== -1) {
-            contents.set(index, newPdfStream);
-          }
-        }
-      }
-    }
-
-    this.createStructTree(pdfDoc, pageBlocks);
-    return pdfDoc;
-  }
-
+/**
+ *
+ * @param rawStream Parse the stream from the PDFObject (PDFRawStream)
+ * @returns
+ */
   private parseStream(rawStream: Uint8Array): Uint8Array {
+
     const tokens = tokenizeContentStream(rawStream);
     const operators = parseOperators(tokens);
 
@@ -328,40 +145,6 @@ private dictToLiteralWithoutEncodingParams(dict: PDFDict): Record<string, any> {
     return new TextEncoder().encode(newStreamString);
   }
 
-  // private async extractContentStreams(
-  //   document: PDFDocument,
-  //   page: PDFPage
-  // ): Promise<PDFStream[]> {
-  //   const results: PDFStream[] = [];
-  //   const refs = this.getContentStreamRefs(page);
-
-  //   for (const ref of refs) {
-  //     const stream = document.context.lookup(ref) as PDFStream;
-  //     results.push(stream);
-  //   }
-
-  //   return results;
-  // }
-
-  private getContentStreamRefs(page: PDFPage): PDFRef[] {
-    const pageNode: PDFPageLeaf = page.node;
-    const contents: PDFObject | undefined = pageNode.get(
-      PDFName.of('Contents')
-    );
-    if (!contents) {
-      return [];
-    }
-
-    if (contents instanceof PDFRef) {
-      return [contents];
-    }
-    if (contents instanceof PDFArray) {
-      return contents
-        .asArray()
-        .filter((el) => el instanceof PDFRef) as PDFRef[];
-    }
-    return [];
-  }
 
   private extractLogicalTextBlocks(ops: PDFOperator[]) {
     const blocks: { type: 'text'; operators: PDFOperator[] }[] = [];
@@ -460,122 +243,4 @@ private dictToLiteralWithoutEncodingParams(dict: PDFDict): Record<string, any> {
     return out;
   }
 
-  private createStructTree(
-    pdfDoc: PDFDocument,
-    pageBlocks: {
-      pageRef: PDFRef;
-      mcids: number[];
-    }[]
-  ) {
-    const ctx = pdfDoc.context;
-
-    //
-    // --- 1. Create /K array for StructTreeRoot ---
-    //
-    const kArray = ctx.obj([]) as PDFArray;
-
-    //
-    // --- 2. Create StructTreeRoot dictionary ---
-    //
-    const structTreeRoot = ctx.obj({
-      Type: 'StructTreeRoot',
-      K: kArray,
-      RoleMap: {
-        P: 'P',
-        Span: 'Span',
-        Figure: 'Figure',
-      },
-    });
-
-    const structTreeRootRef = ctx.register(structTreeRoot);
-
-    //
-    // --- 3. Prepare ParentTree /Nums array ---
-    //
-    const parentNums = ctx.obj([]) as PDFArray;
-
-    //
-    // --- 4. Create StructElem + MCR entries for each block ---
-    //
-    for (const block of pageBlocks) {
-      // Create /K array for this StructElem
-      const elemK = ctx.obj([]) as PDFArray;
-
-      // Create StructElem
-      const structElem = ctx.obj({
-        Type: 'StructElem',
-        S: 'P', // Paragraph for now
-        Pg: block.pageRef,
-        K: elemK,
-      });
-
-      const structElemRef = ctx.register(structElem);
-
-      // Add StructElem to StructTreeRoot.K
-      kArray.push(structElemRef);
-
-      // Create MCR entries for each MCID in this block
-      for (const mcid of block.mcids) {
-        const mcr = ctx.obj({
-          Type: 'MCR',
-          Pg: block.pageRef,
-          MCID: mcid,
-        });
-
-        const mcrRef = ctx.register(mcr);
-
-        // Add MCR to StructElem.K
-        elemK.push(mcrRef);
-
-        // Add MCID → StructElemRef mapping to ParentTree.Nums
-        parentNums.push(ctx.obj(mcid));
-        parentNums.push(structElemRef);
-      }
-    }
-
-    //
-    // --- 5. Create ParentTree dictionary ---
-    //
-    const parentTree = ctx.obj({
-      Nums: parentNums,
-    });
-
-    const parentTreeRef = ctx.register(parentTree);
-
-    // Attach ParentTree to StructTreeRoot
-    structTreeRoot.set(PDFName.of('ParentTree'), parentTreeRef);
-
-    //
-    // --- 6. Attach StructTreeRoot to Catalog ---
-    //
-    pdfDoc.catalog.set(PDFName.of('StructTreeRoot'), structTreeRootRef);
-  }
-
-  private extractMCIDsFromStream(streamBytes: Uint8Array): number[] {
-    const mcids: number[] = [];
-
-    // 1. Tokenize
-    const tokens: PDFToken[] = tokenizeContentStream(streamBytes);
-
-    // 2. Parse operators
-    const operators: PDFOperator[] = parseOperators(tokens);
-
-    // 3. Scan for BDC operators with MCID dictionaries
-    for (const op of operators) {
-      if (op.operator === 'BDC') {
-        const dict = op.operands[1];
-        if (dict && typeof dict.MCID === 'number') {
-          mcids.push(dict.MCID);
-        }
-      }
-    }
-
-    return mcids;
-  }
-
-  private nextMCID(): number {
-    const mcid = this.currentMCID;
-    this.currentMCID += 1;
-    return mcid;
-  }
 }
