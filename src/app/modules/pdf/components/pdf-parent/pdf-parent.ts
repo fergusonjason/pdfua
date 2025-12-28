@@ -29,12 +29,17 @@ export class PdfParent {
       const buffer = await file.arrayBuffer();
       const bytes = new Uint8Array(buffer);
 
-      const newPdfBytes = await this.pdfService.reprocessPDF(bytes);
-      const blob = new Blob([new Uint8Array(newPdfBytes)], { type: 'application/pdf' });
+      const newPdfBytes: Uint8Array = await this.pdfService.reprocessPDF(bytes);
+
+      // this is to get around a stupid SharedArrayBUffer issue and Blob
+      // can't use it as a BlobPart
+      const safeBytes = new Uint8Array(newPdfBytes.length);
+      safeBytes.set(newPdfBytes);
+      const blob = new Blob([safeBytes], { type: 'application/pdf' });
       // const processed = await this.pdfService.reprocessPDF(bytes);
       // debugPagesTree(processed.context);
       // let pdfBytes = await processed.save();  // THIS GOES BOOM
-      //const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+      // const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
 
       saveAs(blob, 'processed.pdf');
     } catch (error) {

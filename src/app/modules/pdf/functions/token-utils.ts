@@ -4,7 +4,8 @@ import { PDFToken } from "../model/pdf-token";
 
 export function tokenizeContentStream(bytes: Uint8Array): PDFToken[] {
 
-  const text = new TextDecoder('UTF-8').decode(bytes);
+  const text = new TextDecoder('latin1').decode(bytes);
+  // const text = new TextDecoder('UTF-8').decode(bytes);
   const tokens: PDFToken[] = [];
 
   let i = 0;
@@ -203,4 +204,113 @@ export function parseOperators(tokens: PDFToken[]): PDFOperator[] {
   }
 
   return ops;
+}
+
+  export function extractLogicalTextBlocks(ops: PDFOperator[]) {
+    const blocks: { type: 'text'; operators: PDFOperator[] }[] = [];
+    let current: PDFOperator[] | null = null;
+    for (const op of ops) {
+      if (op.operator === 'BT') {
+        current = [op];
+        continue;
+      }
+      if (op.operator === 'ET') {
+        if (current) {
+          current.push(op);
+          blocks.push({ type: 'text', operators: current });
+          current = null;
+        }
+        continue;
+      }
+      if (current) {
+        current.push(op);
+      }
+    }
+    return blocks;
+  }
+
+  export function insertMCIDsIntoBlock(
+    block: PDFOperator[],
+    startMCID: number
+  ): { operators: PDFOperator[]; nextMCID: number } {
+    const out: PDFOperator[] = [];
+    let mcid = startMCID;
+
+    for (const op of block) {
+      if (op.operator === 'BT' || op.operator === 'ET') {
+        out.push(op);
+        continue;
+      }
+
+      const isText =
+        op.operator === 'Tj' ||
+        op.operator === 'TJ' ||
+        op.operator === "'" ||
+        op.operator === '"';
+
+      if (isText) {
+        out.push({
+          operator: 'BDC',
+          operands: ['Span', { MCID: mcid }],
+        });
+
+        out.push(op);
+
+        out.push({
+          operator: 'EMC',
+          operands: [],
+        });
+
+        mcid++;
+        continue;
+      }
+
+      out.push(op);
+    }
+
+    return { operators: out, nextMCID: mcid };
+  }
+
+  export function serializeOperators(ops: PDFOperator[]): string {
+    let out = '';
+
+    for (const op of ops) {
+      for (const operand of op.operands) {
+        if (typeof operand === 'string') {
+          if (operand.startsWith('/')) out += operand + ' ';
+          else out += `(${operand}) `;
+        } else if (typeof operand === 'number') {
+          out += operand + ' ';
+        } else if (Array.isArray(operand)) {
+          out += '[';
+          for (const item of operand) {
+            if (typeof item === 'string') out += `(${item}) `;
+            else out += item + ' ';
+          }
+          out += '] ';
+        } else if (typeof operand === 'object') {
+          out += '<< ';
+          for (const key in operand) {
+            out += `/${key} ${operand[key]} `;
+          }
+          out += '>> ';
+        }
+      }
+
+      out += op.operator + '\n';
+    }
+
+    return out;
+  }
+
+export function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((sum, c) => sum + c.length, 0);
+  const out = new Uint8Array(total);
+
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
 }
