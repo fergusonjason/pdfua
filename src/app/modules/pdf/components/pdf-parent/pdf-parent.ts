@@ -1,8 +1,7 @@
 import { Component } from '@angular/core';
-import { PDFContext, PDFDocument, PDFPageLeaf } from 'pdf-lib';
-import { PdfService } from '../../services/pdf-service';
 import { saveAs } from 'file-saver';
-import { debugPagesTree } from '../../functions/pdf-object-utils';
+
+import { PdfService } from '../../services/pdf-service';
 
 
 @Component({
@@ -29,17 +28,14 @@ export class PdfParent {
       const buffer = await file.arrayBuffer();
       const bytes = new Uint8Array(buffer);
 
-      const newPdfBytes: Uint8Array = await this.pdfService.reprocessPDF(bytes);
+      const newPdfBytes: Uint8Array = await this.pdfService.reprocessPDF2(bytes);
 
-      // this is to get around a stupid SharedArrayBUffer issue and Blob
+      // this is to get around a stupid SharedArrayBuffer issue and Blob
       // can't use it as a BlobPart
       const safeBytes = new Uint8Array(newPdfBytes.length);
       safeBytes.set(newPdfBytes);
       const blob = new Blob([safeBytes], { type: 'application/pdf' });
-      // const processed = await this.pdfService.reprocessPDF(bytes);
-      // debugPagesTree(processed.context);
-      // let pdfBytes = await processed.save();  // THIS GOES BOOM
-      // const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+
 
       saveAs(blob, 'processed.pdf');
     } catch (error) {

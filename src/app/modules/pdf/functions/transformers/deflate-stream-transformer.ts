@@ -1,4 +1,4 @@
-import { deflate } from "../stream-utils";
+import { deflate } from "pako";
 import { StreamTransformer } from "./stream-transformer.type";
 
 export const deflateStream: StreamTransformer = async (input: Uint8Array): Promise<Uint8Array> => {
