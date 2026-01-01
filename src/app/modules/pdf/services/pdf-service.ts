@@ -5,7 +5,9 @@ import {
   PDFDict,
   PDFDocument,
   PDFName,
+  PDFNumber,
   PDFObject,
+  PDFRawStream,
   PDFRef,
   PDFStream
 } from 'pdf-lib';
@@ -43,60 +45,80 @@ export class PdfService {
     const pagesDict: PDFDict = pdfContext.lookup(pagesRef) as PDFDict;
     const pageRefs: PDFRef[] = getAllPageRefs(pagesDict, pdfContext);
 
+    // okay, so we're not getting the references of the page content objects, so
+    // we're not running them through the transformers
+
     for (const pageRef of pageRefs) {
       const pageObj: PDFObject | undefined = pdfContext.lookup(pageRef);
-      if (!pageObj) {
+      if (!pageObj || !(pageObj instanceof PDFDict)) {
         continue;
       }
 
-      if (pageObj instanceof PDFStream) {
+      // Get the /Contents entry from the page dictionary
+      const contentsEntry = pageObj.get(PDFName.of('Contents'));
+      if (!contentsEntry) {
+        continue; // Page has no content
+      }
 
-        // can be PDFName, PDFArray, undefined
-        const filters = pageObj.dict.get(PDFName.of('Filter'));
+      // Contents can be a single stream reference or an array of stream references
+      const contentRefs: PDFRef[] = [];
+      if (contentsEntry instanceof PDFRef) {
+        contentRefs.push(contentsEntry);
+      } else if (contentsEntry instanceof PDFArray) {
+        // Handle array of content streams
+        for (let i = 0; i < contentsEntry.size(); i++) {
+          const ref = contentsEntry.get(i);
+          if (ref instanceof PDFRef) {
+            contentRefs.push(ref);
+          }
+        }
+      }
+
+      const mcidCounter: MCIDCounter = new MCIDCounter(0);
+
+      for (const contentRef of contentRefs) {
+        const contentStream = pdfContext.lookup(contentRef);
+        if (!(contentStream instanceof PDFStream)) {
+          continue;
+        }
+
+        const filters = contentStream.dict.get(PDFName.of('Filter'));
         const filterNames: PDFName[] = this.normalizeFilters(filters);
 
-        // pass this to the mcid transformer factory function so I can keep
-        // a running counter for all the pages
-        const mcidCounter = new MCIDCounter(0);
-
-        // build the stream transform pipeline
-        // the pipeline build can probably be a little easier to read
+        // Build the stream transform pipeline
         const pipeline = [];
-
         const hasFlateDecodeFilter = this.hasFilter('FlateDecode', filterNames);
 
-        // if flate decode is in the filters, we need to add inflate/deflate steps
         if (hasFlateDecodeFilter) {
           pipeline.push(inflateStream);
         }
 
-        // insert MCID needs to be inside the pipeline array
+        console.log("MCID counter before pipeline:", mcidCounter.current());
         pipeline.push(createMcidStreamTransformer(mcidCounter));
+        console.log("MCID counter after pipeline:", mcidCounter.current());
 
         if (hasFlateDecodeFilter) {
           pipeline.push(deflateStream);
         }
 
-        // eventually we need to support more decoders than FlateDecode, that's
-        // why we do these as functional transformers
-
-        // now we run a reduce() on the pipeline to process the stream
-        let processedStream1 = pageObj.getContents();
-        for (const transformFm of pipeline) {
-          processedStream1 = await transformFm(processedStream1);
+        // Process the stream through the pipeline
+        let processedStream = contentStream.getContents();
+        for (const transformFn of pipeline) {
+          processedStream = await transformFn(processedStream);
         }
 
-        // do we need to rebuild the PDFstream object entirely or just
-        // replace the contents
-        const newDict = pageObj.dict.clone(pdfContext);
-        const test: Record<string, any> ={
-          ...newDict
-        };
-        const newStream = pdfContext.stream(processedStream1, test);
+        // Create new stream with processed contents
+        // const newDict = contentStream.dict.clone(pdfContext);
+        const newDict = contentStream.dict.clone(pdfContext);
+        newDict.set(PDFName.of('Length'), PDFNumber.of(processedStream.length));
+        const newStream = PDFRawStream.of(newDict, processedStream);
 
-        // update the PDFDocument context with the new stream
-        pdfContext.assign(pageRef, newStream);
+
+        // Update the content stream reference in the context
+        pdfContext.assign(contentRef, newStream);
       }
+
+
     }
 
     return pdfDoc.save();
