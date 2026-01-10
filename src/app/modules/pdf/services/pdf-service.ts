@@ -109,8 +109,8 @@ export class PdfService {
 
         // Create new stream with processed contents
         // const newDict = contentStream.dict.clone(pdfContext);
-        const newDict = contentStream.dict.clone(pdfContext);
-        newDict.set(PDFName.of('Length'), PDFNumber.of(processedStream.length));
+        const newDict: PDFDict = contentStream.dict.clone(pdfContext);
+        //newDict.set(PDFName.of('Length'), PDFNumber.of(processedStream.length));
         const newStream = PDFRawStream.of(newDict, processedStream);
 
 
